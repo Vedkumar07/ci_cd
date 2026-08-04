@@ -20,9 +20,4 @@ jobs:
           username: ubuntu
           key: ${{ secrets.PRIVATE_KEY }}
           port: 22
-          script: |
-            cd ci_cd/my-app
-            git pull origin main
-            npm install
-            npm run build
-            npm run start
+          script: ./deploy.sh
