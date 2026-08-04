@@ -1,23 +1,30 @@
-name: Deploy Next.js to EC2
+name: CI for Next.js App
 
 on:
   push:
     branches:
       - main
+  pull_request:
 
 jobs:
-  deploy:
+  ci:
     runs-on: ubuntu-latest
 
     steps:
       - name: Check out repository code
         uses: actions/checkout@v4
 
-      - name: Execute remote SSH commands
-        uses: appleboy/ssh-action@v1
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          host: 54.167.127.38
-          username: ubuntu
-          key: ${{ secrets.PRIVATE_KEY }}
-          port: 22
-          script: ./deploy.sh
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Build Next.js app
+        run: npm run build
