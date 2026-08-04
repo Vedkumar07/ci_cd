@@ -1,29 +1,24 @@
-name: GitHub Actions Demo
+name: Deploy Next.js to EC2
 
-run-name: ${{ github.actor }} is testing out GitHub Actions
-
-on: [push]
+on:
+  push:
+    branches:
+      - main
 
 jobs:
-  Explore-GitHub-Actions:
+  deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Print trigger message
-        run: echo "The job was automatically triggered by a ${{ github.event_name }} event."
-
-      - name: Print runner message
-        run: echo "This job is now running on a ${{ runner.os }} server hosted by GitHub."
-
       - name: Check out repository code
         uses: actions/checkout@v4
 
-      - name: Print repository message
-        run: echo "The ${{ github.repository }} repository has been cloned to the runner."
-
-      - name: Print readiness message
-        run: echo "The workflow is now ready to test your code on the runner."
-
-      - name: List files in the repository
-        run: ls ${{ github.workspace }}
-
-      - run: echo "This job's status is ${{ job.status }}."
+      - name: Execute remote SSH commands
+        uses: appleboy/ssh-action@v1
+        with:
+          host: 54.167.127.38
+          username: ubuntu
+          key: ${{ secrets.EC2_PRIVATE_KEY }}
+          port: 22
+          script: whoami
+  
