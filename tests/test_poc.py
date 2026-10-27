@@ -10,7 +10,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts/poc"))
 from common import bounded, redact
 from drift import provided_keys, required_keys
-from report import baseline, explain, parse_codex_events
+from report import baseline, explain, parse_codex_events, codex_error_detail, run_codex_process, fallback_report
 from ci_api import API
 
 
@@ -57,6 +57,31 @@ data:
         self.assertIn('authentication', report)
         self.assertIn('AI was not run', report)
         self.assertEqual(usage['tokens'], 0)
+        self.assertIn('AI explanation unavailable', report)
+        self.assertEqual(usage['ai_availability']['status'], 'disabled')
+
+    def test_quota_fallback_preserves_pipeline_cause(self):
+        evidence = {'jobs': [{'name': 'config', 'stage': 'verify', 'log': 'Config drift: BILLING_API_URL missing for staging'}]}
+        report, usage = fallback_report(evidence, RuntimeError('Quota exceeded. Check your plan and billing details.'))
+        self.assertIn('BILLING_API_URL', report)
+        self.assertIn('AI explanation unavailable', report)
+        self.assertIn('Quota exceeded', report)
+        self.assertIn('credits and usage limits', report)
+        self.assertNotIn('AI was not run', report)
+        self.assertEqual(usage['mode'], 'fallback')
+        self.assertEqual(usage['ai_availability']['status'], 'quota')
+        self.assertIsNone(usage['tokens'])
+
+    def test_fallback_reason_cannot_leak_key_or_escape_code_block(self):
+        report, usage = fallback_report({'jobs': []}, RuntimeError('invalid api key sk-proj-demo-secret ```'))
+        self.assertNotIn('sk-proj-demo-secret', report)
+        self.assertNotIn('sk-proj-demo-secret', json.dumps(usage))
+        self.assertEqual(report.count('```'), 2)
+
+    def test_missing_key_fallback_has_setup_instruction(self):
+        report, usage = fallback_report({'jobs': []}, RuntimeError('Set CODEX_API_KEY for Codex automation'))
+        self.assertEqual(usage['ai_availability']['status'], 'missing_key')
+        self.assertIn('OPENAI_API_KEY repository secret', report)
 
     def test_model_requires_log_policy_approval(self):
         with patch.dict(os.environ, {'POC_AI_ENABLED': 'true', 'POC_LOG_POLICY_APPROVED': 'false'}):
@@ -109,6 +134,29 @@ data:
     def test_codex_rejects_tool_activity(self):
         with self.assertRaises(RuntimeError):
             parse_codex_events(json.dumps({'type': 'item.started', 'item': {'type': 'command_execution', 'command': 'whoami'}}))
+
+    def test_provider_error_is_visible_without_secret_or_prompt(self):
+        events = '\n'.join(json.dumps(event) for event in [
+            {'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'PRIVATE PROMPT'}},
+            {'type': 'turn.failed', 'error': {'message': '401 invalid key sk-proj-example-secret'}},
+        ])
+        detail = codex_error_detail(events, 'unrelated stderr')
+        self.assertIn('401 invalid key', detail)
+        self.assertNotIn('sk-proj-example-secret', detail)
+        self.assertNotIn('PRIVATE PROMPT', detail)
+
+    def test_startup_error_redacts_child_secret(self):
+        detail = codex_error_detail('', 'Failed: child-credential', {'CODEX_API_KEY': 'child-credential'})
+        self.assertIn('Failed:', detail)
+        self.assertNotIn('child-credential', detail)
+
+    def test_failed_process_preserves_provider_diagnostic(self):
+        with patch('report.subprocess.Popen') as popen:
+            process = popen.return_value.__enter__.return_value
+            process.communicate.return_value = ('', 'Unknown argument: --example')
+            process.returncode = 1
+            with self.assertRaisesRegex(RuntimeError, 'Unknown argument: --example'):
+                run_codex_process(['codex'], 'prompt', '/tmp', {'PATH': '/usr/bin'})
 
     def test_codex_missing_key_uses_actionable_error(self):
         with patch.dict(os.environ, {'POC_AI_ENABLED': 'true', 'POC_LOG_POLICY_APPROVED': 'true', 'CODEX_API_KEY': ''}):

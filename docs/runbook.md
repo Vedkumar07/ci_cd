@@ -53,3 +53,38 @@ Create the `OPENAI_API_KEY` Actions secret at repository Settings → Secrets an
 The reporter uses the pinned CLI directly so the same adapter works locally and records turn.completed token counts in report.usage.json. Its child environment receives only PATH and the model key; HOME/CODEX_HOME are fresh temporary directories and the checkout is outside its working directory. Codex is sandboxed read-only, with command execution and external integrations disabled. No write-enabled --full-auto or sandbox-bypass option is used. OpenAI also offers the [Codex GitHub Action](https://developers.openai.com/codex/github-action/) with an API proxy for teams who prefer that credential isolation path; this implementation does not use that action or claim its proxy protections.
 
 For local use, set CODEX_API_KEY securely in your shell, run `bash scripts/bootstrap-agent.sh`, then `source .tools/agent.env`. Set the two POC flags and run the fixture demo or Q&A command from README.md. Do not copy your local Codex auth.json into this public repository or its artifacts. [Official automation guidance](https://developers.openai.com/codex/noninteractive/) explains step-scoped API-key authentication and JSONL usage events.
+
+## Q&A troubleshooting
+
+`read -rsp` deliberately hides all typed/pasted key characters. Paste the key, press Enter, and then run `export CODEX_API_KEY`; do not press Ctrl+C while the prompt is waiting. Use `printf '\n'` after the read to put the next shell prompt on a new line. Never print the variable to check it; `test -n "$CODEX_API_KEY" && echo "Key is set"` checks presence only, not whether the credential is valid.
+
+If Q&A fails, the reporter displays the sanitized Codex/provider error and saves artifacts/qa.error.txt (for output artifacts/qa.md). An answer file is created only on success. Read the error before changing credentials or models: it distinguishes invalid authentication, insufficient quota, model availability, network problems and unsupported CLI flags. A generic exit status alone does not identify the root cause. Share only the sanitized error, never the key.
+
+
+## Gemini reporting
+
+GitHub CI and deployment failure-report jobs default to `POC_AI_PROVIDER=gemini`.
+Store the Google AI Studio key as the **Actions** repository secret `GEMINI_API_KEY`
+(Settings → Secrets and variables → Actions), not an Agents secret and not
+`OPENAI_API_KEY`. Keep `POC_AI_ENABLED=true` and `POC_LOG_POLICY_APPROVED=true`
+only with approval to send sanitized logs to Google. Existing approval for a
+different provider should be reviewed for Google before enabling it.
+`POC_GEMINI_MODEL` optionally overrides the default `gemini-3.8-flash`.
+
+The Gemini adapter in `scripts/poc/report.py` uses Google's fixed HTTPS
+`generateContent` endpoint with a header credential and no tools. Redirects are
+rejected. Requests time out after 180 seconds; responses are capped at 2 MB.
+Only completed text is accepted. Errors retain the deterministic evidence report
+and a bounded, redacted availability diagnostic. Token counts come from
+`usageMetadata`; billed cost remains unknown. BMAD is still rendered with the
+official renderer and report-only overrides. Gemini setup installs the renderer
+without the Codex CLI.
+
+For local use, securely export `GEMINI_API_KEY`, set `POC_AI_PROVIDER=gemini`
+and the two policy flags, run `bash scripts/bootstrap-agent.sh --renderer-only`,
+source `.tools/agent.env`, and use the existing demo or Q&A command.
+The local default remains Codex for compatibility. In GitHub, setting the
+repository variable `POC_AI_PROVIDER=codex` restores the Codex adapter with the
+`OPENAI_API_KEY` Actions secret. Both adapters remain report-only.
+
+Reference: https://ai.google.dev/api/generate-content
