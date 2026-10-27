@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/bmad-code-org/BMAD-METHOD",
+  "commit": "61e01f82644c4bb533750cfa0d6d61ab61d2cc9b",
+  "version": "6.13.0-next",
+  "skills": [
+    "bmad",
+    "bmad-code-review",
+    "bmad-project-context",
+    "bmad-deep-recon",
+    "bmod-method",
+    "bmod-core-tools"
+  ],
+  "note": "Preview commit pinned because the POC names these skills; update only after review."
+}

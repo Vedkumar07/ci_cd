@@ -1,0 +1,3 @@
+config:
+  APP_ENV: dev
+  BILLING_API_URL: http://billing.dev.svc.cluster.local

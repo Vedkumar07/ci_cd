@@ -1,29 +1,94 @@
-name: GitHub Actions Demo
-
-run-name: ${{ github.actor }} is testing out GitHub Actions
-
-on: [push]
-
+name: POC-2 CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: poc-ci-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  Explore-GitHub-Actions:
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Print trigger message
-        run: echo "The job was automatically triggered by a ${{ github.event_name }} event."
-
-      - name: Print runner message
-        run: echo "This job is now running on a ${{ runner.os }} server hosted by GitHub."
-
-      - name: Check out repository code
-        uses: actions/checkout@v4
-
-      - name: Print repository message
-        run: echo "The ${{ github.repository }} repository has been cloned to the runner."
-
-      - name: Print readiness message
-        run: echo "The workflow is now ready to test your code on the runner."
-
-      - name: List files in the repository
-        run: ls ${{ github.workspace }}
-
-      - run: echo "This job's status is ${{ job.status }}."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: my-app/package-lock.json
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r requirements-poc.txt
+      - uses: azure/setup-helm@v4.3.1
+        with: {version: v3.19.0}
+      - name: Tests and configuration drift
+        run: |
+          python -m unittest discover -s tests -v
+          helm lint deploy/helm/ci-cd
+          python scripts/poc/drift.py
+      - run: npm ci
+        working-directory: my-app
+      - run: npm run lint && npm run typecheck && npm run build
+        working-directory: my-app
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: config-evidence
+          path: artifacts/
+          retention-days: 7
+  docker:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t ci-cd-poc:${{ github.sha }} .
+  failure-report:
+    timeout-minutes: 10
+    needs: [verify, docker]
+    if: ${{ always() && !cancelled() && contains(needs.*.result, 'failure') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: {name: config-evidence, path: artifacts/}
+      - name: Collect bounded and redacted failure evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POC_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python scripts/poc/ci_api.py collect --provider github
+      - name: Install pinned Codex CLI
+        if: vars.POC_AI_ENABLED == 'true'
+        run: bash scripts/bootstrap-agent.sh
+      - name: Render failure report
+        env:
+          POC_AI_ENABLED: ${{ vars.POC_AI_ENABLED }}
+          POC_LOG_POLICY_APPROVED: ${{ vars.POC_LOG_POLICY_APPROVED }}
+          CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          POC_CODEX_MODEL: ${{ vars.POC_CODEX_MODEL }}
+        run: |
+          if [ -f .tools/agent.env ]; then source .tools/agent.env; fi
+          python scripts/poc/report.py
+      - name: Post or update one PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POC_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python scripts/poc/ci_api.py post --provider github --file artifacts/report.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failure-report
+          path: artifacts/
+          retention-days: 7

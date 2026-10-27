@@ -1,0 +1,2 @@
+FAIL billing.test.ts:42
+Expected charge.status to equal accepted; received rejected

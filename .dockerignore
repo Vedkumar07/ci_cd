@@ -1,0 +1,10 @@
+.git
+.agents
+_bmad
+_bmad-output
+.tools
+.venv
+artifacts
+**/node_modules
+**/.next
+**/.env*

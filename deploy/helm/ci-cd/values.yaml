@@ -1,0 +1,13 @@
+replicaCount: 1
+image:
+  repository: ci-cd-poc
+  tag: local
+  pullPolicy: IfNotPresent
+service:
+  port: 80
+config:
+  APP_ENV: local
+  BILLING_API_URL: http://billing.demo.svc.cluster.local
+resources:
+  requests: {cpu: 50m, memory: 128Mi}
+  limits: {cpu: 500m, memory: 512Mi}

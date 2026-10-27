@@ -1,0 +1,3 @@
+[ERROR] Could not resolve artifact com.oracle:ojdbc7:jar:12.1
+[ERROR] Transfer failed from artifact repository: status code 401 Unauthorized
+Check repository credentials in CI settings.

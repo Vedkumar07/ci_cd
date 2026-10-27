@@ -1,0 +1,9 @@
+.tools/
+.venv/
+artifacts/
+__pycache__/
+*.pyc
+.env
+.kube/
+_bmad/render/
+_bmad-output/
