@@ -17,7 +17,7 @@ Store the Google AI Studio key as the **Actions** repository secret `GEMINI_API_
 `OPENAI_API_KEY`. Keep `POC_AI_ENABLED=true` and `POC_LOG_POLICY_APPROVED=true`
 only with approval to send sanitized logs to Google. Existing approval for a
 different provider should be reviewed for Google before enabling it.
-`POC_GEMINI_MODEL` optionally overrides the default `gemini-2.5-flash`.
+`POC_GEMINI_MODEL` optionally overrides the default `gemini-3.8-flash`.
 
 The Gemini adapter in `scripts/poc/report.py` uses Google's fixed HTTPS
 `generateContent` endpoint with a header credential and no tools. Redirects are

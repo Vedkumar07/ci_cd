@@ -24,6 +24,7 @@ class GeminiTests(unittest.TestCase):
         with patch('report.urllib.request.build_opener', return_value=opener):
             report, usage = explain_gemini('sanitized evidence')
         request = opener.open.call_args.args[0]
+        self.assertTrue(request.full_url.endswith('/models/gemini-3.8-flash:generateContent'))
         self.assertTrue(request.full_url.startswith('https://generativelanguage.googleapis.com/'))
         self.assertNotIn('test-google-credential', request.full_url)
         self.assertNotIn('ci-private', str(request.headers))
@@ -65,6 +66,12 @@ class GeminiTests(unittest.TestCase):
 
     def test_redirects_cannot_forward_key(self):
         self.assertIsNone(NoRedirect().redirect_request(None, None, 302, '', {}, 'https://example.org'))
+
+    def test_unavailable_model_has_configuration_fix(self):
+        report, usage = fallback_report({'jobs': []}, RuntimeError('Gemini HTTP 404: This model is no longer available to new users.'))
+        self.assertEqual(usage['ai_availability']['status'], 'model_unavailable')
+        self.assertIn('POC_GEMINI_MODEL', report)
+        self.assertIn('gemini-3.8-flash', report)
 
     @patch.dict(os.environ, {'POC_AI_ENABLED': 'true', 'POC_AI_PROVIDER': 'gemini', 'POC_LOG_POLICY_APPROVED': 'true', 'GEMINI_API_KEY': 'test-google-credential', 'GH_TOKEN': 'private-ci-credential'})
     def test_shared_prompt_routes_to_gemini_without_codex(self):

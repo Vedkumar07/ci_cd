@@ -65,6 +65,9 @@ def ai_unavailable(error=None):
         elif isinstance(error, subprocess.TimeoutExpired) or "timed out" in lower:
             status = "timeout"
             action = "Check provider availability and network access. This report used the deterministic fallback after the timeout."
+        elif "gemini http 404" in lower:
+            status = "model_unavailable"
+            action = "Set the POC_GEMINI_MODEL Actions repository variable to an available model, such as gemini-3.8-flash. Check Google AI Studio for model access."
         else:
             status = "unavailable"
             action = "Inspect the failure-report job and its artifacts for provider, setup, model-access or network errors."
@@ -157,7 +160,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def explain_gemini(prompt):
     """Text-only API request: no tools, commands, browser or deployment access."""
-    model = os.environ.get("POC_GEMINI_MODEL", "").strip() or "gemini-2.5-flash"
+    model = os.environ.get("POC_GEMINI_MODEL", "").strip() or "gemini-3.8-flash"
     if not re.fullmatch(r"gemini-[A-Za-z0-9.-]+", model):
         raise RuntimeError("POC_GEMINI_MODEL must be a Gemini model ID")
     payload = {
