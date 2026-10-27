@@ -1,0 +1,4 @@
+replicaCount: 2
+config:
+  APP_ENV: prod
+  BILLING_API_URL: http://billing.prod.svc.cluster.local

@@ -1,0 +1,4 @@
+replicaCount: 2
+config:
+  APP_ENV: staging
+  BILLING_API_URL: http://billing.staging.svc.cluster.local

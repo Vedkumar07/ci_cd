@@ -1,0 +1,101 @@
+name: POC-2 Deploy
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: poc-deploy-dev
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: poc-dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -r requirements-poc.txt
+      - uses: azure/setup-helm@v4.3.1
+        with: {version: v3.19.0}
+      - uses: azure/setup-kubectl@v4
+        with: {version: v1.34.1}
+      - name: Revalidate deployment inputs
+        run: |
+          python -m unittest discover -s tests -v
+          helm lint deploy/helm/ci-cd
+          python scripts/poc/drift.py
+      - name: Build and push immutable image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build -t "$IMAGE:$GITHUB_SHA" .
+          docker push "$IMAGE:$GITHUB_SHA"
+          echo "POC_IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Configure target cluster
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_DATA }}
+        run: |
+          test -n "$KUBECONFIG_DATA"
+          umask 077
+          printf '%s' "$KUBECONFIG_DATA" > "$RUNNER_TEMP/poc-kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/poc-kubeconfig" >> "$GITHUB_ENV"
+      - name: Deploy with evidence capture before rollback
+        run: python scripts/poc/deploy.py --image "$POC_IMAGE" --tag "$GITHUB_SHA"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deployment-evidence
+          path: artifacts/
+          retention-days: 7
+  failure-report:
+    timeout-minutes: 10
+    needs: [deploy]
+    if: ${{ always() && !cancelled() && needs.deploy.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with: {name: deployment-evidence, path: artifacts/}
+      - name: Collect bounded and redacted failure evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POC_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python scripts/poc/ci_api.py collect --provider github
+      - name: Install pinned Codex CLI
+        if: vars.POC_AI_ENABLED == 'true'
+        run: bash scripts/bootstrap-agent.sh
+      - name: Render failure report
+        env:
+          POC_AI_ENABLED: ${{ vars.POC_AI_ENABLED }}
+          POC_LOG_POLICY_APPROVED: ${{ vars.POC_LOG_POLICY_APPROVED }}
+          CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          POC_CODEX_MODEL: ${{ vars.POC_CODEX_MODEL }}
+        run: |
+          if [ -f .tools/agent.env ]; then source .tools/agent.env; fi
+          python scripts/poc/report.py
+      - name: Post or update one PR comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POC_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python scripts/poc/ci_api.py post --provider github --file artifacts/report.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: deployment-failure-report
+          path: artifacts/
+          retention-days: 7

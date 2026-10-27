@@ -1,0 +1,319 @@
+POC-2 Plan: BMAD in the CI/CD Pipeline (ubp-accept-billing-charge)
+
+
+
+
+POC-2 Plan: BMAD in the CI/CD Pipeline
+(ubp-accept-billing-charge)
+  ​Oct 26, 2026         · ​@Ved
+
+
+Summary
+POC-2 takes BMAD from the developer's desk into the CI/CD pipeline of ubp-accept-
+billing-charge, so a failed pipeline explains itself on the merge request and non-DevOps
+people can ask about the Dockerfile, pipeline and Helm chart.
+
+POC-1 showed that BMAD's review and repo-context skills find real problems in code. In
+POC-2 the same skills read pipeline logs and deployment files instead of source code.
+BMAD has no built-in CI/CD or Helm feature, so POC-2 is BMAD skills plus a thin layer of
+scripts and prompts that we write and keep in the repo.
+
+Three capabilities are in scope: a failure report on the merge request, a config drift check
+before deploy, and a Helm and DevOps Q&A.
+
+
+Problem it solves
+When a pipeline fails, the developer has to read raw logs from several tools, and the real
+cause is often not in the log text. Four problems come up:
+
+     Logs show the symptom, not the cause. A build that cannot resolve ojdbc7 or ubp-
+     common-process looks like a code error, but in POC-1 it was a 401 from the artifact
+     repository.
+     Deploy failures lose their evidence. Helm reports that an upgrade failed or timed out.
+     The reason sits in pod events and logs, and an automatic rollback ( --atomic ) deletes
+     the failing pods.
+     Config mistakes surface late. A property read with @Value and no default stops the
+     app at startup. If the ConfigMap or Helm values for one environment lack it, we find out
+     at deploy time.
+     Non-DevOps people depend on the DevOps team. Developers, QA and new joiners
+     ask others to explain the Dockerfile, the pipeline stages and the Helm chart.
+
+
+Scope
+POC-2 covers three capabilities, each tied to a pipeline stage. It reports and explains; it
+never changes code or deployments.
+
+
+
+                                                                                        Page 1 of 7
+POC-2 Plan: BMAD in the CI/CD Pipeline (ubp-accept-billing-charge)
+
+
+
+
+  #           Capability                                 Pipeline stage                 Built from
+
+  1           Failure report on the                      Any failed job: Maven build,   bmad-code-review (review-
+              merge request                              tests, Sonar, Docker build     only, non-interactive),
+                                                         and push, Helm, deploy         AGENTS.md, custom
+                                                                                        collection scripts
+
+  2           Config drift check                         Before deploy                  Plain scripts to detect, the
+                                                                                        same report job to explain
+
+  3           Helm and DevOps                            Any time, outside the          bmad-project-context ,
+              Q&A                                        pipeline                       bmad-deep-recon , a DevOps
+                                                                                        context file
+
+
+Out of scope: fixing code automatically, re-running or rolling back deploys, committing or
+pushing, the ticket tree and autonomous loops. Detecting a broken CI file is only partly
+covered (see Known gaps).
+
+
+How it works
+One extra job at the end of the pipeline collects the logs of whatever failed and posts a
+plain-language report on the merge request.
+
+
+
+
+pipeline stages and the failure report · 5 stages, 1 explain job
+
+Each stage can fail; all failures feed the same job, which reads the logs plus repo context
+and writes one comment.
+
+
+
+
+                                                                                                                   Page 2 of 7
+POC-2 Plan: BMAD in the CI/CD Pipeline (ubp-accept-billing-charge)
+
+
+
+
+Design principle: scripts detect, the AI explains. A failed job or a missing config key is
+found by GitLab and by deterministic scripts. The agent is only asked to explain what is
+already known, which keeps the result reliable and the token use low.
+
+
+Capability 1: failure report on the merge request
+When any job fails, an extra job posts one comment on the merge request saying which
+stage failed, the likely cause, and where to look. The developer does not type a command.
+
+Trigger. A job in GitLab's .post stage with when: on_failure , added to the project's
+ .gitlab-ci.yml . The shared template stays untouched.
+
+Steps
+
+ 1. Collect: fetch the failed jobs of the current pipeline through the GitLab API (a project
+    access token with API read scope, stored as a masked variable), plus any diagnostics
+     files the jobs saved. Keep the last lines of each log and redact secrets.
+ 2. Add context: the commit diff, AGENTS.md from bmad-project-context , and the
+    DevOps context file.
+ 3. Explain: a headless agent runs bmad-code-review in review-only mode without asking
+     questions, with the failure as its intent.
+ 4. Post: one merge request comment with the failed stage, likely cause, file or line to
+     check, and a suggested fix. Nothing is applied automatically.
+
+Examples of what developers would see
+
+
+  Failure                                                            The report says
+
+  Build fails: cannot resolve ojdbc7 ,                               Repository credentials problem, not your code.
+  401                                                                Check the repository token variable.
+
+  A test fails after a change                                        The test, the changed method it covers, and the
+                                                                     likely reason it now fails.
+
+  Deploy fails, pod restarts in a loop                               The app needs property X, which the ConfigMap
+                                                                     for this environment does not set. Add it to the
+                                                                     Helm values.
+
+
+
+
+Capability 2: config drift check
+A script compares the properties the code needs with the properties each environment
+provides, and fails the job before deploy if one is missing. Scripts detect because they are
+deterministic and cheap; the AI only explains the result.
+
+
+
+                                                                                                                   Page 3 of 7
+POC-2 Plan: BMAD in the CI/CD Pipeline (ubp-accept-billing-charge)
+
+
+
+
+ 1. List the keys the code requires: @Value properties with no default, and placeholders
+     in bootstrap.yml .
+ 2. List the keys each environment defines: render the Helm chart with that environment's
+    values and read the ConfigMap it produces.
+ 3. Compare. Any missing key fails the job with the key name and the environment.
+ 4. The failure report from capability 1 explains which file to edit.
+
+This targets a real risk found in POC-1: a property with no default stops the app at startup,
+so a missing value only shows up when the pod crashes. Where the keys live depends on
+the real chart layout, which we have not seen (see Assumptions).
+
+
+Capability 3: Helm and DevOps Q&A
+A non-DevOps person asks a question in their AI coding tool and gets an answer that
+points to the exact files. No pipeline run is needed.
+
+How it is built
+
+     A DevOps context file records the base image and Dockerfile steps, what each CI job
+     does, the Helm chart structure, how values differ per environment, how config reaches
+     the pod, and how to deploy and roll back.
+     AGENTS.md, written by bmad-project-context , points to that file so every run loads
+     it.
+      bmad-deep-recon answers repository questions with cited findings, so each answer
+     names its source files.
+     When the Dockerfile or chart changes, bmad-project-context refreshes the context.
+     An optional CI job can warn when those files change without a context update.
+
+Sample questions for the demo
+
+     What does this chart deploy, and which values change per environment?
+     Where is a database setting defined and how does it reach the pod?
+     What does each pipeline stage do, and what fails if I skip one?
+     How do I roll back a bad release?
+     Why is the container built the way the Dockerfile shows?
+
+
+Known gaps
+Two cases need special handling, and one of them is not fully automatic in POC-2.
+
+
+
+
+                                                                                       Page 4 of 7
+POC-2 Plan: BMAD in the CI/CD Pipeline (ubp-accept-billing-charge)
+
+
+
+
+A broken CI file cannot report itself. If .gitlab-ci.yml or the shared template is invalid,
+GitLab creates no jobs, so there are no logs and the failure-report job never runs. GitLab
+shows the config error on the pipeline page. Mitigation: run GitLab's CI lint check before
+push (a pre-push hook or the IDE) and let the agent explain the lint error locally. A
+webhook-based watcher that explains the error on the merge request is a later option,
+because it adds a service to run and secure.
+
+Helm rollback removes the evidence. With --atomic , Helm rolls back and deletes the
+failing pods, so their events and logs vanish and the job log only says the upgrade failed.
+Mitigation: the deploy job saves diagnostics before the rollback and keeps them with
+artifacts: when: always :
+
+     cluster events and kubectl describe of the pods
+      kubectl logs --previous for crashed containers
+
+      helm history and helm status
+     the values that were applied, with secrets removed
+
+This needs read-only cluster access for the runner.
+
+
+
+Guardrails and security
+Everything POC-2 adds is read-only and report-only.
+
+     No commits, pushes, deploys, re-runs or rollbacks. The only output is a merge request
+     comment and saved artifacts.
+     Read-only tokens: GitLab API read scope plus a merge request comment permission,
+     and read-only cluster access.
+     Redact secrets from logs and applied values before the agent sees them, and cap the
+     amount of log sent.
+     Run the report job only on failure, and set review depth by risk (quick for low risk,
+     thorough for high) to control token use.
+     BMAD skills run with full agent permissions, so review skill sources before installing
+     and keep them in git, as in POC-1.
+     Logs go to the AI model that runs the agent. Confirm the data policy with the security
+     team before sending real logs.
+
+
+Assumptions and open items
+The plan is a design until these are confirmed. We have not seen the real Dockerfile,
+pipeline template or Helm chart.
+
+
+
+
+                                                                                             Page 5 of 7
+POC-2 Plan: BMAD in the CI/CD Pipeline (ubp-accept-billing-charge)
+
+
+
+
+  Item                                                          Status            Why it matters
+
+  A headless AI agent can run in                                Open, biggest     POC-1 ran in GitHub Copilot, and
+  the GitLab runner                                             dependency        the runner needs an agent that
+                                                                                  works without a person
+
+  Token scopes for reading job                                  To verify         A project access token with API
+  logs and posting merge request                                                  read scope is expected to work
+  comments
+
+  Runner has read-only access to                                To verify         Needed for deploy diagnostics
+  the cluster
+
+  Real Dockerfile and Helm chart                                Assumed           The drift check and the DevOps
+  layout                                                                          context depend on it
+
+  Deploy uses helm upgrade --                                   Assumed           It decides when diagnostics
+  atomic                                                                          must be saved
+
+  Data policy for sending logs to                               To confirm with   Logs may contain sensitive data
+  the model                                                     security
+
+  Runner can reach the artifact                                 To verify         POC-1 hit a 401 and an SSL
+  repository and certificates                                                     workaround
+
+
+
+
+Phases, demo and success criteria
+POC-2 succeeds if each forced failure produces a report that names the right stage and
+file, with no change made to code or deployments.
+
+Phases
+
+ 1. Local dry run: feed real failed logs to the agent and tune the prompt.
+ 2. GitLab job: the on-failure job that posts the merge request comment.
+ 3. Config drift: the detection script and its failure message.
+ 4. DevOps context and Q&A: write the context file and test it with real questions.
+ 5. Demo and review with the client.
+
+Demo script
+
+     Force three failures: an artifact repository 401 in the build, a failing test, and a missing
+     ConfigMap key at deploy. Show each report appear on the merge request.
+     Break the CI file and show the lint check catching it before the push.
+     Ask the five sample Helm and DevOps questions as a non-DevOps person.
+
+
+
+
+                                                                                                                Page 6 of 7
+POC-2 Plan: BMAD in the CI/CD Pipeline (ubp-accept-billing-charge)
+
+
+
+
+Success criteria
+
+     Each forced failure gets a report naming the correct stage, cause and file.
+     The drift check catches the missing key before deploy.
+     Helm answers match what the DevOps team would say for all five questions.
+     Nothing is changed automatically.
+     Tokens used per report are recorded, so the cost is known.
+
+
+
+
+                                                                                   Page 7 of 7
+

@@ -1,0 +1,2 @@
+Readiness probe failed: HTTP 503
+Config drift: BILLING_API_URL missing for staging

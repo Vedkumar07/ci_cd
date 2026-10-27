@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ci-cd
+version: 0.1.0
+appVersion: "0.1.0"
+description: Next.js POC-2 demo, not the production billing service
+type: application

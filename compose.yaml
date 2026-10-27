@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports: ["3000:3000"]
+    environment:
+      BILLING_API_URL: http://billing.demo.svc.cluster.local
+      APP_ENV: local
+    read_only: true
+    tmpfs: [/tmp, /app/.next/cache]
+    security_opt: ["no-new-privileges:true"]

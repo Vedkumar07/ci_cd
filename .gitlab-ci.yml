@@ -1,0 +1,94 @@
+# Reference only: GitHub Actions + Codex is the selected platform.
+# PDF-compatible alternative. Does not include or modify a shared template.
+stages: [build, test, config, docker, deploy]
+variables:
+  POC_AI_ENABLED: "false"
+  POC_LOG_POLICY_APPROVED: "false"
+  POC_ENV: dev
+build:
+  image: node:22-bookworm-slim
+  stage: build
+  script:
+    - cd my-app
+    - npm ci
+    - npm run build
+test:
+  image: node:22-bookworm-slim
+  stage: test
+  script:
+    - cd my-app
+    - npm ci
+    - npm run lint
+    - npm run typecheck
+config-drift:
+  image: python:3.12-bookworm
+  stage: config
+  script:
+    - bash scripts/bootstrap-tools.sh
+    - export PATH="$CI_PROJECT_DIR/.tools/bin:$PATH"
+    - pip install -r requirements-poc.txt
+    - python -m unittest discover -s tests -v
+    - helm lint deploy/helm/ci-cd
+    - python scripts/poc/drift.py
+  artifacts:
+    when: always
+    paths: [artifacts/]
+    expire_in: 7 days
+docker-build:
+  image: docker:28.5.1-cli
+  services: [docker:28.5.1-dind]
+  stage: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: /certs
+    DOCKER_TLS_VERIFY: '1'
+    DOCKER_CERT_PATH: /certs/client
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login "$CI_REGISTRY" -u "$CI_REGISTRY_USER" --password-stdin
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHA"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+deploy:
+  image: python:3.12-bookworm
+  stage: deploy
+  resource_group: poc-dev
+  environment: poc-dev
+  script:
+    - bash scripts/bootstrap-tools.sh
+    - export PATH="$CI_PROJECT_DIR/.tools/bin:$PATH"
+    - pip install -r requirements-poc.txt
+    - test -n "$KUBECONFIG"
+    - python scripts/poc/deploy.py --env "$POC_ENV" --image "$CI_REGISTRY_IMAGE" --tag "$CI_COMMIT_SHA"
+  artifacts:
+    when: always
+    paths: [artifacts/]
+    expire_in: 7 days
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+failure-report:
+  resource_group: poc-report-$CI_COMMIT_REF_SLUG
+  image: python:3.12-bookworm
+  stage: .post
+  when: on_failure
+  script:
+    - python scripts/poc/ci_api.py collect --provider gitlab
+    - |
+      if [ "$POC_AI_ENABLED" = true ]; then
+        apt-get update && apt-get install -y --no-install-recommends nodejs npm
+        bash scripts/bootstrap-agent.sh
+        . .tools/agent.env
+      fi
+      python scripts/poc/report.py
+    - python scripts/poc/ci_api.py post --provider gitlab --file artifacts/report.md
+  artifacts:
+    when: always
+    paths: [artifacts/]
+    expire_in: 7 days
+  rules:
+    # Secrets and model execution are allowed only for trusted same-project branches.
+    - if: '$CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID'
+      when: on_failure
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_failure

@@ -1,0 +1,7 @@
+{
+  "description": "Required server environment variables for the Next.js demo. Java projects are additionally scanned for @Value and bootstrap placeholders.",
+  "required": [
+    "APP_ENV",
+    "BILLING_API_URL"
+  ]
+}
