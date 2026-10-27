@@ -76,13 +76,23 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           POC_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python scripts/poc/ci_api.py collect --provider github
-      - name: Install pinned Codex CLI
+      - name: Install report tooling
         if: vars.POC_AI_ENABLED == 'true'
-        run: bash scripts/bootstrap-agent.sh
+        env:
+          POC_AI_PROVIDER: ${{ vars.POC_AI_PROVIDER || 'gemini' }}
+        run: |
+          if [ "$POC_AI_PROVIDER" = "gemini" ]; then
+            bash scripts/bootstrap-agent.sh --renderer-only
+          else
+            bash scripts/bootstrap-agent.sh
+          fi
       - name: Render failure report
         env:
           POC_AI_ENABLED: ${{ vars.POC_AI_ENABLED }}
           POC_LOG_POLICY_APPROVED: ${{ vars.POC_LOG_POLICY_APPROVED }}
+          POC_AI_PROVIDER: ${{ vars.POC_AI_PROVIDER || 'gemini' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          POC_GEMINI_MODEL: ${{ vars.POC_GEMINI_MODEL }}
           CODEX_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           POC_CODEX_MODEL: ${{ vars.POC_CODEX_MODEL }}
         run: |
