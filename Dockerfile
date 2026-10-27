@@ -1,5 +1,5 @@
 FROM node:22-bookworm-slim AS deps
-WORKDIR 
+WORKDIR /app
 COPY my-app/package*.json ./
 RUN npm ci
 FROM deps AS build
